@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import requests
 from bs4 import BeautifulSoup
 import urllib3
@@ -28,6 +29,7 @@ SORTED_BUILDING_CODES = sorted(BUILDING_MAP.keys(), key=len, reverse=True)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
+CORS(app)
 app.config['JSON_AS_ASCII'] = False
 
 # 3️⃣ 輔助函式：用來轉換教室名稱
