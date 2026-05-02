@@ -1,0 +1,13 @@
+# Firebase 資料庫金鑰 (最重要！絕對不能上傳)
+serviceAccountKey.json
+
+# Python 產生的暫存檔
+__pycache__/
+*.pyc
+
+# 虛擬環境資料夾 (如果有使用的話)
+venv/
+env/
+
+# 其他環境變數檔
+.env
