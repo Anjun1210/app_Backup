@@ -87,33 +87,39 @@ def scrape_courses_and_info(session):
     return student_name, department, course_list
 
 def scrape_grades(session):
-    """ 終極版成績爬蟲：透過 SSO 秘密通道，直搗 MYPU 歷年成績總表 """
+    """ 終極版成績爬蟲：破解 SSO 隱藏表單，直搗 MYPU 歷年成績總表 """
     all_semesters = []
     try:
-        # 🚀 關鍵步驟：走 SSO 秘密通道獲取 MYPU 的登入權限
+        # 1. 抵達 SSO 秘密通道，取得包含授權碼的隱藏表單
         sso_url = "https://alcat.pu.edu.tw/index_chkLogin.php?link=index_ToNewPlt.php?sysID=score_query"
-        print("====== 正在透過 SSO 秘密通道跳轉... ======")
         sso_resp = session.get(sso_url, verify=False, timeout=15)
         sso_resp.encoding = 'utf-8'
-
-        # 🕵️‍♂️ 新增偵錯：看看通道裡面藏了什麼表單機關？
-        print("====== SSO 通道裡的機關長怎樣？ ======")
-        print(sso_resp.text[:1500])
-        print("========================================")
         
-        # 確保順利拿到授權後，前往真正的歷年成績總表
+        # 2. 解析這張表單，把裡面的機關全部挖出來
+        soup_sso = BeautifulSoup(sso_resp.text, 'html.parser')
+        sso_form = soup_sso.find('form', {'name': 'ssoForm'})
+        
+        if sso_form:
+            action_url = sso_form.get('action') # 取得目的地網址
+            payload = {}
+            # 將所有隱藏的 input 欄位 (包含你的 st_name, sess_id 等) 打包成字典
+            for input_tag in sso_form.find_all('input'):
+                name = input_tag.get('name')
+                value = input_tag.get('value', '')
+                if name:
+                    payload[name] = value
+            
+            # 🚀 3. 模擬瀏覽器的 JavaScript，手動把表單 POST 過去！(最關鍵的一步)
+            session.post(action_url, data=payload, verify=False, timeout=15)
+            print("====== 成功提交 SSO 授權表單！ ======")
+
+        # 4. 拿著已經開通的 Session，大搖大擺走進 MYPU 歷年成績總表
         score_url = "https://mypu.pu.edu.tw/score_query/score_all.php"
         resp = session.get(score_url, verify=False, timeout=15)
         resp.encoding = 'utf-8'
-        
-        # 🕵️‍♂️ 新增偵錯：看看 MYPU 把我們擋在門外的畫面！
-        print("====== MYPU 最終畫面 ======")
-        print(resp.text[:500])
-        print("===========================")
-        
         soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # 開始解析 mypu 的成績表格
+        # 5. 開始瘋狂抓取成績卡片
         tables = soup.find_all('table')
         
         for table in tables:
@@ -154,7 +160,6 @@ def scrape_grades(session):
     except Exception as e:
         print(f"⚠️ 歷年成績總表爬取失敗: {e}")
     
-    # 回傳排序後的資料 (通常網頁上已經是從新到舊，這裡做雙重保險)
     return all_semesters
 
 def get_cached_school_calendar():
