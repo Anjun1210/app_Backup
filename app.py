@@ -139,7 +139,10 @@ def scrape_grades(session):
                     sem_dict[sem_code] = {
                         "semester": sem_name,
                         "gpa": "--",
-                        "rank": "--",
+                        
+                        "behavior": "--",
+                        "class_rank": "--",
+                        "dept_rank": "--",
                         "details": []
                     }
                 
@@ -151,8 +154,13 @@ def scrape_grades(session):
                     
                     if "學期平均" in category or "Average" in category or "GPA" in category:
                         sem_dict[sem_code]["gpa"] = val_td
-                    elif "班排名" in category or "Class ranking" in category:
-                        sem_dict[sem_code]["rank"] = val_td
+                    elif "班排名" in category or "Class" in category:
+                        sem_dict[sem_code]["class_rank"] = val_td
+                    elif "系排名" in category or "Department" in category:
+                        sem_dict[sem_code]["dept_rank"] = val_td
+                    elif "操行" in category or "Behavior" in category:
+                        sem_dict[sem_code]["behavior"] = val_td
+                    
                 else:
                     # 這是一般成績行！
                     subj_full = tds[1].get_text(separator='\n', strip=True)
