@@ -50,7 +50,7 @@ def format_location(raw_location_str):
 def scrape_courses_and_info(session):
     """ 獨立的課表與基本資料爬蟲 """
     course_list = []
-    student_name, department = "蕭安均", "靜宜大學 資訊管理系" # 預設值
+    student_name, department = "未知姓名", "未知系所" # 預設值
     try:
         course_url = "https://alcat.pu.edu.tw/stu_query/query_course.html"
         resp = session.get(course_url, verify=False, timeout=10)
@@ -91,33 +91,65 @@ def scrape_courses_and_info(session):
     return student_name, department, course_list
 
 def scrape_grades(session):
-    """ 升級版成績爬蟲：智慧尋找表頭防呆 """
-    grades_list = []
+    """ 攻克 score_all.php：抓取歷年所有學期成績、平均與排名 """
+    all_semesters = []
     try:
-        score_url = "https://alcat.pu.edu.tw/stu_query/query_score.html"
-        resp = session.get(score_url, verify=False, timeout=10)
+        # 1. 前往歷年成績總表網頁
+        score_url = "https://mypu.pu.edu.tw/score_query/score_all.php"
+        resp = session.get(score_url, verify=False, timeout=15)
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # 智慧定位：尋找包含「科目」或「成績」字眼的表格
-        for table in soup.find_all('table'):
-            headers = [th.get_text(strip=True) for th in table.find_all(['th', 'td'])]
-            header_str = "".join(headers)
+        # 2. 定位所有的學期區塊
+        # 靜宜的總表通常是用多個 <table> 或一個大 table 搭配學年度標題
+        # 我們尋找包含「學年度」字眼的表格或標籤
+        tables = soup.find_all('table')
+        
+        current_semester = None
+        
+        for table in tables:
+            text = table.get_text()
+            # 偵測是否為學期標頭（例如：112 學年度 第 1 學期）
+            sem_match = re.search(r'(\d+)\s*學年度\s*第\s*(\d)\s*學期', text)
             
-            if "科目" in header_str or "成績" in header_str:
-                for row in table.find_all('tr')[1:]:
+            if sem_match:
+                sem_name = f"{sem_match.group(1)}學年度 第{sem_match.group(2)}學期"
+                semester_obj = {
+                    "semester": sem_name,
+                    "gpa": "0.0",
+                    "rank": "無數據",
+                    "details": []
+                }
+                
+                # 抓取該表格內的科目與成績
+                rows = table.find_all('tr')
+                for row in rows:
                     cols = row.find_all('td')
-                    if len(cols) >= 4: # 保守抓取前幾個欄位
-                        subject = cols[0].get_text(strip=True)
-                        credits = cols[1].get_text(strip=True)
-                        score = cols[3].get_text(strip=True)
-                        # 排除標題列或空資料
-                        if subject and score and subject != "科目名稱":
-                            grades_list.append({"subject": subject, "credits": credits, "score": score})
-                break # 抓到成績表就跳出
+                    if len(cols) >= 4:
+                        subj = cols[0].get_text(strip=True)
+                        crd = cols[1].get_text(strip=True)
+                        scr = cols[3].get_text(strip=True)
+                        # 排除標頭與無效行
+                        if subj and scr and "科目" not in subj and "學期總分" not in subj:
+                            semester_obj["details"].append({
+                                "subject": subj, "credits": crd, "score": scr
+                            })
+                
+                # 抓取學期末的總結（平均、排名）
+                # 通常在表格的最下方或是緊鄰的文字中
+                summary_match = re.search(r'學期平均[：:\s]*([\d.]+)', text)
+                rank_match = re.search(r'名次[：:\s]*([\d/]+)', text)
+                if summary_match: semester_obj["gpa"] = summary_match.group(1)
+                if rank_match: semester_obj["rank"] = rank_match.group(1)
+                
+                if semester_obj["details"]:
+                    all_semesters.append(semester_obj)
+
     except Exception as e:
-        print(f"⚠️ 成績爬取失敗: {e}")
-    return grades_list
+        print(f"⚠️ 歷年成績總表爬取失敗: {e}")
+    
+    # 確保資料是按照學期排序 (從新到舊)
+    return all_semesters[::-1] if all_semesters else []
 
 def get_cached_school_calendar():
     """ 帶有快取機制的校曆爬蟲 (🚀 升級為 iCal 解析版) """
