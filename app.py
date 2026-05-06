@@ -99,6 +99,11 @@ def scrape_grades(session):
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'html.parser')
 
+        # 🚀🚀🚀 新增這三行偵錯指令 🚀🚀🚀
+        print("====== 偵錯：ALCAT 成績網頁到底長怎樣？ ======")
+        print(resp.text[:1500]) # 印出前 1500 個字元
+        print("=============================================")
+
         # 尋找下拉選單裡面的所有選項 <option>
         options = soup.find_all('option')
         semesters_to_fetch = []
