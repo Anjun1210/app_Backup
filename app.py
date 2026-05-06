@@ -55,11 +55,13 @@ def scrape_courses_and_info(session):
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        html_text = soup.get_text()
-        name_match = re.search(r'姓名[：:\s]*([\u4e00-\u9fa5]+)', html_text)
-        dept_match = re.search(r'系級[：:\s]*([\u4e00-\u9fa5a-zA-Z0-9]+)', html_text)
-        if name_match: student_name = name_match.group(1)
-        if dept_match: department = dept_match.group(1)
+        # 🚀 修正：加入 separator，避免文字黏在一起
+        html_text = soup.get_text(separator='  ')
+        name_match = re.search(r'(姓名|學生)\s*[:：]?\s*([\u4e00-\u9fa5]{2,5})', html_text)
+        dept_match = re.search(r'(系級|系別|科系|系所|班級)\s*[:：]?\s*([\u4e00-\u9fa5A-Za-z0-9]+)', html_text)
+        
+        if name_match: student_name = name_match.group(2)
+        if dept_match: department = dept_match.group(2)
 
         course_table = soup.find('table', class_='small')
         if course_table:
@@ -89,6 +91,7 @@ def scrape_courses_and_info(session):
 def scrape_grades(session):
     """ 終極版成績爬蟲：破解 SSO 並解析 MYPU 扁平化表格結構 """
     all_semesters = []
+    real_name = "未知姓名" # 🚀 新增變數來裝 SSO 的真實姓名
     try:
         # 1. 走 SSO 秘密通道取得授權
         sso_url = "https://alcat.pu.edu.tw/index_chkLogin.php?link=index_ToNewPlt.php?sysID=score_query"
@@ -106,6 +109,10 @@ def scrape_grades(session):
                 value = input_tag.get('value', '')
                 if name:
                     payload[name] = value
+                
+                # 🚀 修正：直接從 SSO 隱藏表單裡把真實姓名攔截下來
+                if name == 'st_name' and value:
+                    real_name = value
             
             # 自動提交表單進入 MYPU
             session.post(action_url, data=payload, verify=False, timeout=15)
@@ -116,7 +123,7 @@ def scrape_grades(session):
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # 3. 🎯 全新解析邏輯：針對 MYPU 的「扁平化表格」
+        # 3. 解析邏輯：針對 MYPU 的「扁平化表格」
         sem_dict = {}
         rows = soup.find_all('tr')
         
@@ -125,32 +132,26 @@ def scrape_grades(session):
             if not tds or len(tds) < 6:
                 continue
                 
-            # 取得第一欄的學期代碼 (例如：1132, 1141)
             sem_code = tds[0].get_text(strip=True)
             
-            # 確保是 3~4 碼的數字 (過濾掉非資料行)
             if sem_code.isdigit() and len(sem_code) >= 3:
                 year = sem_code[:-1]
                 sem = sem_code[-1]
                 sem_name = f"{year}學年度 第{sem}學期"
                 
-                # 如果是新的學期，就在字典裡開一個新盒子
                 if sem_code not in sem_dict:
                     sem_dict[sem_code] = {
                         "semester": sem_name,
                         "gpa": "--",
-                        
                         "behavior": "--",
                         "class_rank": "--",
                         "dept_rank": "--",
                         "details": []
                     }
                 
-                # 檢查這行是「排名/平均」還是「一般成績」？
-                # 根據你的截圖，排名的 <td> 會帶有 GradeSemRank 的 class
                 if "GradeSemRank" in tds[0].get('class', []):
                     category = tds[1].get_text(separator=" ", strip=True)
-                    val_td = tds[-1].get_text(strip=True) # 數值在最後一個 td
+                    val_td = tds[-1].get_text(strip=True) 
                     
                     if "學期平均" in category or "Average" in category or "GPA" in category:
                         sem_dict[sem_code]["gpa"] = val_td
@@ -160,15 +161,12 @@ def scrape_grades(session):
                         sem_dict[sem_code]["dept_rank"] = val_td
                     elif "操行" in category or "Behavior" in category:
                         sem_dict[sem_code]["behavior"] = val_td
-                    
                 else:
-                    # 這是一般成績行！
                     subj_full = tds[1].get_text(separator='\n', strip=True)
-                    subj_ch = subj_full.split('\n')[0] # 切掉英文，只留中文課名
+                    subj_ch = subj_full.split('\n')[0] 
                     credits = tds[4].get_text(strip=True)
                     score = tds[5].get_text(strip=True)
                     
-                    # 確保有抓到課名跟分數再加進去
                     if subj_ch and score:
                         sem_dict[sem_code]["details"].append({
                             "subject": subj_ch,
@@ -176,7 +174,7 @@ def scrape_grades(session):
                             "score": score
                         })
 
-        # 4. 把字典轉回陣列，並排序確保最新學期在最上面
+        # 4. 把字典轉回陣列，並排序
         for key in sorted(sem_dict.keys(), reverse=True):
             if sem_dict[key]["details"]: 
                 all_semesters.append(sem_dict[key])
@@ -184,7 +182,8 @@ def scrape_grades(session):
     except Exception as e:
         print(f"⚠️ 歷年成績總表爬取失敗: {e}")
     
-    return all_semesters
+    # 🚀 將成績與 SSO 抓到的姓名一起回傳
+    return all_semesters, real_name
 
 def get_cached_school_calendar():
     """ 帶有快取機制的校曆爬蟲 """
@@ -252,19 +251,17 @@ def sync_campus():
     login_url = "https://alcat.pu.edu.tw/index_check.php"
     
     try:
-        # 1. 執行第一階段登入
         login_resp = session.post(login_url, data={'uid': student_id, 'upassword': password, 'en_flag': ''}, headers=headers, verify=False, timeout=10)
         
         if "登入失敗" in login_resp.text or "密碼錯誤" in login_resp.text:
             return jsonify({"status": "error", "message": "帳號或密碼錯誤"}), 401
 
-        # 2. 多執行緒抓取
         with ThreadPoolExecutor(max_workers=2) as executor:
             future_courses = executor.submit(scrape_courses_and_info, session)
             future_grades = executor.submit(scrape_grades, session)
 
-            student_name, department, course_list = future_courses.result()
-            grades_data = future_grades.result()
+            course_name, department, course_list = future_courses.result()
+            grades_data, sso_name = future_grades.result()
 
         print(f"====== 爬蟲報告：總共抓到了 {len(grades_data)} 個學期的成績！ ======")
 
@@ -273,10 +270,13 @@ def sync_campus():
 
         school_calendar_data = get_cached_school_calendar()
 
+        # 🚀 優先使用 100% 準確的 SSO 姓名！如果 SSO 失敗才用課表抓到的名字
+        final_name = sso_name if sso_name != "未知姓名" else course_name
+
         return jsonify({
             "status": "success",
             "message": "成功同步資料！",
-            "student_name": student_name, 
+            "student_name": final_name, 
             "department": department,
             "courses": course_list,
             "grades": grades_data,
