@@ -120,43 +120,56 @@ def scrape_grades(session):
     return grades_list
 
 def get_cached_school_calendar():
-    """ 帶有快取機制的校曆爬蟲 """
+    """ 帶有快取機制的校曆爬蟲 (🚀 升級為 iCal 解析版) """
     now = time.time()
     # 如果快取有效，直接回傳記憶體內的資料
     if now - GLOBAL_CACHE["school_calendar"]["timestamp"] < CACHE_TTL_SECONDS and GLOBAL_CACHE["school_calendar"]["data"]:
         print("⚡ 使用快取的校園行事曆")
         return GLOBAL_CACHE["school_calendar"]["data"]
 
-    print("🌐 重新爬取校園行事曆...")
+    print("🌐 重新下載並解析靜宜大學 iCal 行事曆...")
     calendar_dict = {}
     try:
-        cal_url = "https://www.pu.edu.tw/p/412-1000-1454.php" 
-        resp = requests.get(cal_url, verify=False, timeout=10)
+        # ⬇️ ⬇️ ⬇️ ⚠️ 安均，就是改這裡！把你的 Google 日曆 iCal 網址貼在雙引號裡面 ⚠️ ⬇️ ⬇️ ⬇️
+        ical_url = "請把你的_iCal_網址貼在這裡.ics" 
+        # ⬆️ ⬆️ ⬆️ ⚠️ 安均，就是改這裡！把你的 Google 日曆 iCal 網址貼在雙引號裡面 ⚠️ ⬆️ ⬆️ ⬆️
+        
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        resp = requests.get(ical_url, headers=headers, verify=False, timeout=10)
         resp.encoding = 'utf-8'
-        soup = BeautifulSoup(resp.text, 'html.parser')
+        lines = resp.text.splitlines()
 
-        current_year = datetime.now().year
-        for row in soup.find_all('tr'):
-            text = row.get_text(separator=' ', strip=True)
-            date_match = re.search(r'(1[0-2]|[1-9])[月/]([1-3]?[0-9])日?', text)
-            
-            if date_match:
-                month, day = date_match.group(1), date_match.group(2)
-                date_key = f"{current_year}-{month}-{day}"
-                event_title = re.sub(r'(1[0-2]|[1-9])[月/]([1-3]?[0-9])日?', '', text).strip()
-                event_title = re.sub(r'[^a-zA-Z0-9\u4e00-\u9fa5]', '', event_title) 
-                
-                if len(event_title) >= 2:
+        current_event = {}
+        for line in lines:
+            if line.startswith('BEGIN:VEVENT'):
+                current_event = {}
+            elif line.startswith('SUMMARY:'):
+                current_event['title'] = line[8:].strip()
+            elif line.startswith('DTSTART'):
+                match = re.search(r':(\d{8})', line)
+                if match:
+                    date_str = match.group(1)
+                    year, month, day = int(date_str[0:4]), int(date_str[4:6]), int(date_str[6:8])
+                    current_event['date_key'] = f"{year}-{month}-{day}"
+            elif line.startswith('LOCATION:'):
+                current_event['loc'] = line[9:].strip()
+            elif line.startswith('DESCRIPTION:'):
+                current_event['note'] = line[12:].strip()
+            elif line.startswith('END:VEVENT'):
+                if 'date_key' in current_event and 'title' in current_event:
+                    date_key = current_event['date_key']
                     calendar_dict.setdefault(date_key, []).append({
-                        "title": event_title[:15], "time": "全天",
-                        "loc": "靜宜校園", "note": "來自學校官網自動同步"
+                        "title": current_event['title'],
+                        "time": "全天",
+                        "loc": current_event.get('loc', "靜宜校園"),
+                        "note": current_event.get('note', "官方行事曆自動同步")
                     })
     except Exception as e:
         print(f"⚠️ 校曆爬取失敗: {e}")
         
     if not calendar_dict:
         calendar_dict[f"{datetime.now().year}-{datetime.now().month}-{datetime.now().day}"] = [
-            {"title": "校曆同步檢查中", "time": "系統", "loc": "API", "note": "請檢查學校官網是否改版"}
+            {"title": "行事曆設定中", "time": "系統", "loc": "設定", "note": "請在後端填入正確的 iCal 網址"}
         ]
     
     # 寫入快取
