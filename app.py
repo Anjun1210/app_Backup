@@ -94,11 +94,23 @@ def scrape_grades(session):
         sso_url = "https://alcat.pu.edu.tw/index_chkLogin.php?link=index_ToNewPlt.php?sysID=score_query"
         print("====== 正在透過 SSO 秘密通道跳轉... ======")
         sso_resp = session.get(sso_url, verify=False, timeout=15)
+        sso_resp.encoding = 'utf-8'
+
+        # 🕵️‍♂️ 新增偵錯：看看通道裡面藏了什麼表單機關？
+        print("====== SSO 通道裡的機關長怎樣？ ======")
+        print(sso_resp.text[:1500])
+        print("========================================")
         
         # 確保順利拿到授權後，前往真正的歷年成績總表
         score_url = "https://mypu.pu.edu.tw/score_query/score_all.php"
         resp = session.get(score_url, verify=False, timeout=15)
         resp.encoding = 'utf-8'
+        
+        # 🕵️‍♂️ 新增偵錯：看看 MYPU 把我們擋在門外的畫面！
+        print("====== MYPU 最終畫面 ======")
+        print(resp.text[:500])
+        print("===========================")
+        
         soup = BeautifulSoup(resp.text, 'html.parser')
 
         # 開始解析 mypu 的成績表格
