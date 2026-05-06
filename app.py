@@ -58,7 +58,7 @@ def scrape_courses_and_info(session):
         # 🚀 修正：加入 separator，避免文字黏在一起
         html_text = soup.get_text(separator='  ')
         name_match = re.search(r'(姓名|學生)[a-zA-Z\s]*[:：]\s*([\u4e00-\u9fa5]{2,5})', html_text)
-        dept_match = re.search(r'(系級|系別|科系|系所|班級)[a-zA-Z\s]*[:：]\s*([\u4e00-\u9fa5A-Za-z0-9]+)', html_text)
+        dept_match = re.search(r'(系級|系別|科系|系所|班級)[a-zA-Z\s:：]*([\u4e00-\u9fa5A-Za-z0-9]+)', html_text)
         
         if name_match: student_name = name_match.group(2)
         if dept_match: department = dept_match.group(2)
