@@ -119,10 +119,27 @@ def scrape_grades(session):
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # 👇 🚀 加上這三行，看看進門後到底長怎樣！ 🚀 👇
+        # 👇 🚀 終極版網頁結構探測器 🚀 👇
+        print("====== 深度探測 MYPU 成績表結構 ======")
+        tables = soup.find_all('table')
+        print(f"1. 網頁中找到 {len(tables)} 個 <table> 標籤")
         
-        print("====== 進入 MYPU 後的真實畫面 ======")
-        print(resp.text[:1500]) # 印出前 1500 個字
+        if tables:
+            print("2. 第一個表格的 HTML 結構 (前 500 字)：")
+            print(str(tables[0])[:500])
+        else:
+            print("2. 找不到 <table>！資料極高機率是透過 JavaScript API 動態載入。")
+            
+        # 找找看有沒有隱藏的 API 網址 (AJAX)
+        if "ajax" in resp.text.lower() or "json" in resp.text.lower():
+            print("3. ⚠️ 發現動態載入特徵：成績極高機率是被 JavaScript 藏起來了！")
+            
+        # 找找看有沒有「學年度」關鍵字
+        sem_test = re.search(r'.{0,30}學年度.{0,30}', soup.get_text())
+        if sem_test:
+            print(f"4. 找到學期關鍵字附近文字: {sem_test.group(0)}")
+        else:
+            print("4. ❌ 網頁純文字中完全找不到「學年度」，代表成績不在這份 HTML 裡！")
         print("====================================")
 
         # 5. 開始瘋狂抓取成績卡片
