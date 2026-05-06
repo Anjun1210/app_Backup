@@ -87,98 +87,91 @@ def scrape_courses_and_info(session):
     return student_name, department, course_list
 
 def scrape_grades(session):
-    """ 終極版成績爬蟲：破解 SSO 隱藏表單，直搗 MYPU 歷年成績總表 """
+    """ 終極版成績爬蟲：破解 SSO 並解析 MYPU 扁平化表格結構 """
     all_semesters = []
     try:
-        # 1. 抵達 SSO 秘密通道，取得包含授權碼的隱藏表單
+        # 1. 走 SSO 秘密通道取得授權
         sso_url = "https://alcat.pu.edu.tw/index_chkLogin.php?link=index_ToNewPlt.php?sysID=score_query"
         sso_resp = session.get(sso_url, verify=False, timeout=15)
         sso_resp.encoding = 'utf-8'
         
-        # 2. 解析這張表單，把裡面的機關全部挖出來
         soup_sso = BeautifulSoup(sso_resp.text, 'html.parser')
         sso_form = soup_sso.find('form', {'name': 'ssoForm'})
         
         if sso_form:
-            action_url = sso_form.get('action') # 取得目的地網址
+            action_url = sso_form.get('action')
             payload = {}
-            # 將所有隱藏的 input 欄位 (包含你的 st_name, sess_id 等) 打包成字典
             for input_tag in sso_form.find_all('input'):
                 name = input_tag.get('name')
                 value = input_tag.get('value', '')
                 if name:
                     payload[name] = value
             
-            # 🚀 3. 模擬瀏覽器的 JavaScript，手動把表單 POST 過去！(最關鍵的一步)
+            # 自動提交表單進入 MYPU
             session.post(action_url, data=payload, verify=False, timeout=15)
-            print("====== 成功提交 SSO 授權表單！ ======")
 
-        # 4. 拿著已經開通的 Session，大搖大擺走進 MYPU 歷年成績總表
+        # 2. 進入歷年成績總表
         score_url = "https://mypu.pu.edu.tw/score_query/score_all.php"
         resp = session.get(score_url, verify=False, timeout=15)
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # 👇 🚀 終極版網頁結構探測器 🚀 👇
-        print("====== 深度探測 MYPU 成績表結構 ======")
-        tables = soup.find_all('table')
-        print(f"1. 網頁中找到 {len(tables)} 個 <table> 標籤")
+        # 3. 🎯 全新解析邏輯：針對 MYPU 的「扁平化表格」
+        sem_dict = {}
+        rows = soup.find_all('tr')
         
-        if tables:
-            print("2. 第一個表格的 HTML 結構 (前 500 字)：")
-            print(str(tables[0])[:500])
-        else:
-            print("2. 找不到 <table>！資料極高機率是透過 JavaScript API 動態載入。")
+        for row in rows:
+            tds = row.find_all('td')
+            if not tds or len(tds) < 6:
+                continue
+                
+            # 取得第一欄的學期代碼 (例如：1132, 1141)
+            sem_code = tds[0].get_text(strip=True)
             
-        # 找找看有沒有隱藏的 API 網址 (AJAX)
-        if "ajax" in resp.text.lower() or "json" in resp.text.lower():
-            print("3. ⚠️ 發現動態載入特徵：成績極高機率是被 JavaScript 藏起來了！")
-            
-        # 找找看有沒有「學年度」關鍵字
-        sem_test = re.search(r'.{0,30}學年度.{0,30}', soup.get_text())
-        if sem_test:
-            print(f"4. 找到學期關鍵字附近文字: {sem_test.group(0)}")
-        else:
-            print("4. ❌ 網頁純文字中完全找不到「學年度」，代表成績不在這份 HTML 裡！")
-        print("====================================")
+            # 確保是 3~4 碼的數字 (過濾掉非資料行)
+            if sem_code.isdigit() and len(sem_code) >= 3:
+                year = sem_code[:-1]
+                sem = sem_code[-1]
+                sem_name = f"{year}學年度 第{sem}學期"
+                
+                # 如果是新的學期，就在字典裡開一個新盒子
+                if sem_code not in sem_dict:
+                    sem_dict[sem_code] = {
+                        "semester": sem_name,
+                        "gpa": "--",
+                        "rank": "--",
+                        "details": []
+                    }
+                
+                # 檢查這行是「排名/平均」還是「一般成績」？
+                # 根據你的截圖，排名的 <td> 會帶有 GradeSemRank 的 class
+                if "GradeSemRank" in tds[0].get('class', []):
+                    category = tds[1].get_text(separator=" ", strip=True)
+                    val_td = tds[-1].get_text(strip=True) # 數值在最後一個 td
+                    
+                    if "學期平均" in category or "Average" in category or "GPA" in category:
+                        sem_dict[sem_code]["gpa"] = val_td
+                    elif "班排名" in category or "Class ranking" in category:
+                        sem_dict[sem_code]["rank"] = val_td
+                else:
+                    # 這是一般成績行！
+                    subj_full = tds[1].get_text(separator='\n', strip=True)
+                    subj_ch = subj_full.split('\n')[0] # 切掉英文，只留中文課名
+                    credits = tds[4].get_text(strip=True)
+                    score = tds[5].get_text(strip=True)
+                    
+                    # 確保有抓到課名跟分數再加進去
+                    if subj_ch and score:
+                        sem_dict[sem_code]["details"].append({
+                            "subject": subj_ch,
+                            "credits": credits,
+                            "score": score
+                        })
 
-        # 5. 開始瘋狂抓取成績卡片
-        tables = soup.find_all('table')
-        
-        for table in tables:
-            text = table.get_text()
-            sem_match = re.search(r'(\d+)\s*學年度\s*第\s*(\d)\s*學期', text)
-            
-            if sem_match:
-                sem_name = f"{sem_match.group(1)}學年度 第{sem_match.group(2)}學期"
-                semester_obj = {
-                    "semester": sem_name,
-                    "gpa": "0.0",
-                    "rank": "無數據",
-                    "details": []
-                }
-                
-                rows = table.find_all('tr')
-                for row in rows:
-                    cols = row.find_all('td')
-                    if len(cols) >= 4:
-                        subj = cols[0].get_text(strip=True)
-                        crd = cols[1].get_text(strip=True)
-                        scr = cols[3].get_text(strip=True)
-                        
-                        if subj and scr and "科目" not in subj and "學期總分" not in subj:
-                            semester_obj["details"].append({
-                                "subject": subj, "credits": crd, "score": scr
-                            })
-                
-                summary_match = re.search(r'學期平均[：:\s]*([\d.]+)', text)
-                rank_match = re.search(r'名次[：:\s]*([\d/]+)', text)
-                
-                if summary_match: semester_obj["gpa"] = summary_match.group(1)
-                if rank_match: semester_obj["rank"] = rank_match.group(1)
-                
-                if semester_obj["details"]:
-                    all_semesters.append(semester_obj)
+        # 4. 把字典轉回陣列，並排序確保最新學期在最上面
+        for key in sorted(sem_dict.keys(), reverse=True):
+            if sem_dict[key]["details"]: 
+                all_semesters.append(sem_dict[key])
 
     except Exception as e:
         print(f"⚠️ 歷年成績總表爬取失敗: {e}")
