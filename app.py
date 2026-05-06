@@ -131,7 +131,7 @@ def get_cached_school_calendar():
     calendar_dict = {}
     try:
         # ⬇️ ⬇️ ⬇️ ⚠️ 安均，就是改這裡！把你的 Google 日曆 iCal 網址貼在雙引號裡面 ⚠️ ⬇️ ⬇️ ⬇️
-        ical_url = "請把你的_iCal_網址貼在這裡.ics" 
+        ical_url = "https://calendar.google.com/calendar/ical/c_l1lhlorqj2e0rdqk5t69klbens%40group.calendar.google.com/public/basic.ics" 
         # ⬆️ ⬆️ ⬆️ ⚠️ 安均，就是改這裡！把你的 Google 日曆 iCal 網址貼在雙引號裡面 ⚠️ ⬆️ ⬆️ ⬆️
         
         headers = {'User-Agent': 'Mozilla/5.0'}
