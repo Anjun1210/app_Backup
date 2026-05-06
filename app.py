@@ -243,6 +243,8 @@ def sync_campus():
             student_name, department, course_list = future_courses.result()
             grades_data = future_grades.result()
 
+            print(f"====== 爬蟲報告：總共抓到了 {len(grades_data)} 個學期的成績！ ======")
+
         if not course_list:
             return jsonify({"status": "error", "message": "找不到課表資料，可能是系統維護中"}), 404
 
