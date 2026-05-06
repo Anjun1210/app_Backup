@@ -119,6 +119,12 @@ def scrape_grades(session):
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'html.parser')
 
+        # 👇 🚀 加上這三行，看看進門後到底長怎樣！ 🚀 👇
+        
+        print("====== 進入 MYPU 後的真實畫面 ======")
+        print(resp.text[:1500]) # 印出前 1500 個字
+        print("====================================")
+
         # 5. 開始瘋狂抓取成績卡片
         tables = soup.find_all('table')
         
