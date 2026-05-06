@@ -18,10 +18,8 @@ app = Flask(__name__)
 CORS(app)
 app.config['JSON_AS_ASCII'] = False
 
-# 🔐 API 金鑰
 CWA_API_KEY = os.environ.get("CWA_API_KEY", "CWA-706D5143-2567-4EC1-9FC5-FDB6079B736B")
 
-# 🧠 全域快取 (Caching)
 GLOBAL_CACHE = {
     "school_calendar": {"data": None, "timestamp": 0}
 }
@@ -50,7 +48,7 @@ def format_location(raw_location_str):
 def scrape_courses_and_info(session):
     """ 獨立的課表與基本資料爬蟲 """
     course_list = []
-    student_name, department = "未知姓名", "未知系所" # 🚀 已移除個人資訊
+    student_name, department = "未知姓名", "未知系所" 
     try:
         course_url = "https://alcat.pu.edu.tw/stu_query/query_course.html"
         resp = session.get(course_url, verify=False, timeout=10)
@@ -89,83 +87,62 @@ def scrape_courses_and_info(session):
     return student_name, department, course_list
 
 def scrape_grades(session):
-    """ 終極版成績爬蟲：利用 ALCAT 下拉選單，自動切換並抓取歷年所有成績 """
+    """ 終極版成績爬蟲：透過 SSO 秘密通道，直搗 MYPU 歷年成績總表 """
     all_semesters = []
     try:
-        score_url = "https://alcat.pu.edu.tw/stu_query/query_score.html"
-
-        # 1. 抓取第一次進入的預設頁面，尋找「學期下拉選單」
+        # 🚀 關鍵步驟：走 SSO 秘密通道獲取 MYPU 的登入權限
+        sso_url = "https://alcat.pu.edu.tw/index_chkLogin.php?link=index_ToNewPlt.php?sysID=score_query"
+        print("====== 正在透過 SSO 秘密通道跳轉... ======")
+        sso_resp = session.get(sso_url, verify=False, timeout=15)
+        
+        # 確保順利拿到授權後，前往真正的歷年成績總表
+        score_url = "https://mypu.pu.edu.tw/score_query/score_all.php"
         resp = session.get(score_url, verify=False, timeout=15)
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # 🚀🚀🚀 新增這三行偵錯指令 🚀🚀🚀
-        print("====== 偵錯：ALCAT 成績網頁到底長怎樣？ ======")
-        print(resp.text[:1500]) # 印出前 1500 個字元
-        print("=============================================")
-
-        # 尋找下拉選單裡面的所有選項 <option>
-        options = soup.find_all('option')
-        semesters_to_fetch = []
-
-        for opt in options:
-            val = opt.get('value')
-            text = opt.get_text(strip=True)
-            if val and ("學年" in text or "學期" in text):
-                semesters_to_fetch.append({"yrm": val, "name": text})
-
-        # 防呆機制：如果完全找不到下拉選單，就直接爬當前頁面
-        if not semesters_to_fetch:
-            semesters_to_fetch.append({"yrm": None, "name": "最新學期"})
-
-        # 2. 開始跑迴圈，針對每一個學期發送請求抓資料
-        for sem in semesters_to_fetch:
-            semester_obj = {
-                "semester": sem["name"],
-                "gpa": "0.0",
-                "rank": "未公佈",
-                "details": []
-            }
-
-            # 發送 POST 請求切換學期
-            if sem["yrm"]:
-                sem_resp = session.post(score_url, data={'yrm': sem["yrm"]}, verify=False, timeout=10)
-                sem_resp.encoding = 'utf-8'
-                sem_soup = BeautifulSoup(sem_resp.text, 'html.parser')
-            else:
-                sem_soup = soup 
-
-            # 3. 解析該學期的表格
-            for table in sem_soup.find_all('table'):
-                headers = [th.get_text(strip=True) for th in table.find_all(['th', 'td'])]
-                if "科目" in "".join(headers) or "成績" in "".join(headers):
-                    for row in table.find_all('tr')[1:]:
-                        cols = row.find_all('td')
-                        if len(cols) >= 4:
-                            subj = cols[0].get_text(strip=True)
-                            crd = cols[1].get_text(strip=True)
-                            scr = cols[3].get_text(strip=True)
-
-                            if subj and scr and "科目" not in subj:
-                                semester_obj["details"].append({
-                                    "subject": subj, "credits": crd, "score": scr
-                                })
-                    break 
-
-            # 4. 抓取總平均與名次
-            summary_text = sem_soup.get_text()
-            gpa_match = re.search(r'學期平均[：:\s]*([\d.]+)', summary_text)
-            rank_match = re.search(r'名次[：:\s]*([\d/]+)', summary_text)
-
-            if gpa_match: semester_obj["gpa"] = gpa_match.group(1)
-            if rank_match: semester_obj["rank"] = rank_match.group(1)
-
-            if semester_obj["details"]:
-                all_semesters.append(semester_obj)
+        # 開始解析 mypu 的成績表格
+        tables = soup.find_all('table')
+        
+        for table in tables:
+            text = table.get_text()
+            sem_match = re.search(r'(\d+)\s*學年度\s*第\s*(\d)\s*學期', text)
+            
+            if sem_match:
+                sem_name = f"{sem_match.group(1)}學年度 第{sem_match.group(2)}學期"
+                semester_obj = {
+                    "semester": sem_name,
+                    "gpa": "0.0",
+                    "rank": "無數據",
+                    "details": []
+                }
+                
+                rows = table.find_all('tr')
+                for row in rows:
+                    cols = row.find_all('td')
+                    if len(cols) >= 4:
+                        subj = cols[0].get_text(strip=True)
+                        crd = cols[1].get_text(strip=True)
+                        scr = cols[3].get_text(strip=True)
+                        
+                        if subj and scr and "科目" not in subj and "學期總分" not in subj:
+                            semester_obj["details"].append({
+                                "subject": subj, "credits": crd, "score": scr
+                            })
+                
+                summary_match = re.search(r'學期平均[：:\s]*([\d.]+)', text)
+                rank_match = re.search(r'名次[：:\s]*([\d/]+)', text)
+                
+                if summary_match: semester_obj["gpa"] = summary_match.group(1)
+                if rank_match: semester_obj["rank"] = rank_match.group(1)
+                
+                if semester_obj["details"]:
+                    all_semesters.append(semester_obj)
 
     except Exception as e:
-        print(f"⚠️ 歷年成績迴圈爬取失敗: {e}")
-
+        print(f"⚠️ 歷年成績總表爬取失敗: {e}")
+    
+    # 回傳排序後的資料 (通常網頁上已經是從新到舊，這裡做雙重保險)
     return all_semesters
 
 def get_cached_school_calendar():
@@ -234,7 +211,7 @@ def sync_campus():
     login_url = "https://alcat.pu.edu.tw/index_check.php"
     
     try:
-        # 1. 執行登入
+        # 1. 執行第一階段登入
         login_resp = session.post(login_url, data={'uid': student_id, 'upassword': password, 'en_flag': ''}, headers=headers, verify=False, timeout=10)
         
         if "登入失敗" in login_resp.text or "密碼錯誤" in login_resp.text:
@@ -248,7 +225,7 @@ def sync_campus():
             student_name, department, course_list = future_courses.result()
             grades_data = future_grades.result()
 
-            print(f"====== 爬蟲報告：總共抓到了 {len(grades_data)} 個學期的成績！ ======")
+        print(f"====== 爬蟲報告：總共抓到了 {len(grades_data)} 個學期的成績！ ======")
 
         if not course_list:
             return jsonify({"status": "error", "message": "找不到課表資料，可能是系統維護中"}), 404
@@ -261,7 +238,7 @@ def sync_campus():
             "student_name": student_name, 
             "department": department,
             "courses": course_list,
-            "grades": grades_data, # 🚀 這個欄位現在會塞滿大一到大三的所有成績！
+            "grades": grades_data,
             "school_calendar": school_calendar_data 
         })
 
