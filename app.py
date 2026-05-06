@@ -18,14 +18,14 @@ app = Flask(__name__)
 CORS(app)
 app.config['JSON_AS_ASCII'] = False
 
-# 🔐 API 金鑰改用環境變數，若無則使用預設值
+# 🔐 API 金鑰
 CWA_API_KEY = os.environ.get("CWA_API_KEY", "CWA-706D5143-2567-4EC1-9FC5-FDB6079B736B")
 
-# 🧠 全域快取 (Caching)：避免頻繁爬取靜態網頁
+# 🧠 全域快取 (Caching)
 GLOBAL_CACHE = {
     "school_calendar": {"data": None, "timestamp": 0}
 }
-CACHE_TTL_SECONDS = 86400  # 快取存活時間：24小時
+CACHE_TTL_SECONDS = 86400  
 
 BUILDING_MAP = {
     'AK': '任垣樓 ', 'SP': '伯鐸樓 ', 'JA': '靜安樓 ', 'TG': '格倫樓 ',
@@ -35,7 +35,7 @@ BUILDING_MAP = {
 SORTED_BUILDING_CODES = sorted(BUILDING_MAP.keys(), key=len, reverse=True)
 
 # =======================================================
-# 🛠️ 爬蟲核心函式庫 (模組化設計)
+# 🛠️ 爬蟲核心函式庫
 # =======================================================
 
 def format_location(raw_location_str):
@@ -50,33 +50,31 @@ def format_location(raw_location_str):
 def scrape_courses_and_info(session):
     """ 獨立的課表與基本資料爬蟲 """
     course_list = []
-    student_name, department = "未知姓名", "未知系所" # 預設值
+    student_name, department = "未知姓名", "未知系所" # 🚀 已移除個人資訊
     try:
         course_url = "https://alcat.pu.edu.tw/stu_query/query_course.html"
         resp = session.get(course_url, verify=False, timeout=10)
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # 1. 抓取基本資料
         html_text = soup.get_text()
         name_match = re.search(r'姓名[：:\s]*([\u4e00-\u9fa5]+)', html_text)
         dept_match = re.search(r'系級[：:\s]*([\u4e00-\u9fa5a-zA-Z0-9]+)', html_text)
         if name_match: student_name = name_match.group(1)
         if dept_match: department = dept_match.group(1)
 
-        # 2. 抓取課表
         course_table = soup.find('table', class_='small')
         if course_table:
             for row in course_table.find_all('tr')[1:]:
                 cols = row.find_all('td')
                 if len(cols) >= 6:
                     raw_time_loc = cols[5].get_text(strip=True)
-                    weekday, sessions, raw_location = "", "", ""
+                    weekday, sessions_str, raw_location = "", "", ""
                     if "(" in raw_time_loc and ":" in raw_time_loc:
                         try:
                             weekday = raw_time_loc.split('(')[0].strip()
                             parts = raw_time_loc.split(')')[1].split(':')
-                            sessions = parts[0].strip()
+                            sessions_str = parts[0].strip()
                             raw_location = parts[1].strip()
                         except: pass
                     
@@ -84,88 +82,96 @@ def scrape_courses_and_info(session):
                     short_title = cols[2].get_text(separator='\n', strip=True).split('\n')[0]
                     course_list.append({
                         "title": short_title, "weekday": weekday, 
-                        "sessions": sessions, "location": full_location 
+                        "sessions": sessions_str, "location": full_location 
                     })
     except Exception as e:
         print(f"⚠️ 課表爬取發生錯誤: {e}")
     return student_name, department, course_list
 
 def scrape_grades(session):
-    """ 攻克 score_all.php：抓取歷年所有學期成績、平均與排名 """
+    """ 終極版成績爬蟲：利用 ALCAT 下拉選單，自動切換並抓取歷年所有成績 """
     all_semesters = []
     try:
-        # 1. 前往歷年成績總表網頁
-        score_url = "https://mypu.pu.edu.tw/score_query/score_all.php"
+        score_url = "https://alcat.pu.edu.tw/stu_query/query_score.html"
+
+        # 1. 抓取第一次進入的預設頁面，尋找「學期下拉選單」
         resp = session.get(score_url, verify=False, timeout=15)
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # 2. 定位所有的學期區塊
-        # 靜宜的總表通常是用多個 <table> 或一個大 table 搭配學年度標題
-        # 我們尋找包含「學年度」字眼的表格或標籤
-        tables = soup.find_all('table')
-        
-        current_semester = None
-        
-        for table in tables:
-            text = table.get_text()
-            # 偵測是否為學期標頭（例如：112 學年度 第 1 學期）
-            sem_match = re.search(r'(\d+)\s*學年度\s*第\s*(\d)\s*學期', text)
-            
-            if sem_match:
-                sem_name = f"{sem_match.group(1)}學年度 第{sem_match.group(2)}學期"
-                semester_obj = {
-                    "semester": sem_name,
-                    "gpa": "0.0",
-                    "rank": "無數據",
-                    "details": []
-                }
-                
-                # 抓取該表格內的科目與成績
-                rows = table.find_all('tr')
-                for row in rows:
-                    cols = row.find_all('td')
-                    if len(cols) >= 4:
-                        subj = cols[0].get_text(strip=True)
-                        crd = cols[1].get_text(strip=True)
-                        scr = cols[3].get_text(strip=True)
-                        # 排除標頭與無效行
-                        if subj and scr and "科目" not in subj and "學期總分" not in subj:
-                            semester_obj["details"].append({
-                                "subject": subj, "credits": crd, "score": scr
-                            })
-                
-                # 抓取學期末的總結（平均、排名）
-                # 通常在表格的最下方或是緊鄰的文字中
-                summary_match = re.search(r'學期平均[：:\s]*([\d.]+)', text)
-                rank_match = re.search(r'名次[：:\s]*([\d/]+)', text)
-                if summary_match: semester_obj["gpa"] = summary_match.group(1)
-                if rank_match: semester_obj["rank"] = rank_match.group(1)
-                
-                if semester_obj["details"]:
-                    all_semesters.append(semester_obj)
+        # 尋找下拉選單裡面的所有選項 <option>
+        options = soup.find_all('option')
+        semesters_to_fetch = []
+
+        for opt in options:
+            val = opt.get('value')
+            text = opt.get_text(strip=True)
+            if val and ("學年" in text or "學期" in text):
+                semesters_to_fetch.append({"yrm": val, "name": text})
+
+        # 防呆機制：如果完全找不到下拉選單，就直接爬當前頁面
+        if not semesters_to_fetch:
+            semesters_to_fetch.append({"yrm": None, "name": "最新學期"})
+
+        # 2. 開始跑迴圈，針對每一個學期發送請求抓資料
+        for sem in semesters_to_fetch:
+            semester_obj = {
+                "semester": sem["name"],
+                "gpa": "0.0",
+                "rank": "未公佈",
+                "details": []
+            }
+
+            # 發送 POST 請求切換學期
+            if sem["yrm"]:
+                sem_resp = session.post(score_url, data={'yrm': sem["yrm"]}, verify=False, timeout=10)
+                sem_resp.encoding = 'utf-8'
+                sem_soup = BeautifulSoup(sem_resp.text, 'html.parser')
+            else:
+                sem_soup = soup 
+
+            # 3. 解析該學期的表格
+            for table in sem_soup.find_all('table'):
+                headers = [th.get_text(strip=True) for th in table.find_all(['th', 'td'])]
+                if "科目" in "".join(headers) or "成績" in "".join(headers):
+                    for row in table.find_all('tr')[1:]:
+                        cols = row.find_all('td')
+                        if len(cols) >= 4:
+                            subj = cols[0].get_text(strip=True)
+                            crd = cols[1].get_text(strip=True)
+                            scr = cols[3].get_text(strip=True)
+
+                            if subj and scr and "科目" not in subj:
+                                semester_obj["details"].append({
+                                    "subject": subj, "credits": crd, "score": scr
+                                })
+                    break 
+
+            # 4. 抓取總平均與名次
+            summary_text = sem_soup.get_text()
+            gpa_match = re.search(r'學期平均[：:\s]*([\d.]+)', summary_text)
+            rank_match = re.search(r'名次[：:\s]*([\d/]+)', summary_text)
+
+            if gpa_match: semester_obj["gpa"] = gpa_match.group(1)
+            if rank_match: semester_obj["rank"] = rank_match.group(1)
+
+            if semester_obj["details"]:
+                all_semesters.append(semester_obj)
 
     except Exception as e:
-        print(f"⚠️ 歷年成績總表爬取失敗: {e}")
-    
-    # 確保資料是按照學期排序 (從新到舊)
-    return all_semesters[::-1] if all_semesters else []
+        print(f"⚠️ 歷年成績迴圈爬取失敗: {e}")
+
+    return all_semesters
 
 def get_cached_school_calendar():
-    """ 帶有快取機制的校曆爬蟲 (🚀 升級為 iCal 解析版) """
+    """ 帶有快取機制的校曆爬蟲 """
     now = time.time()
-    # 如果快取有效，直接回傳記憶體內的資料
     if now - GLOBAL_CACHE["school_calendar"]["timestamp"] < CACHE_TTL_SECONDS and GLOBAL_CACHE["school_calendar"]["data"]:
-        print("⚡ 使用快取的校園行事曆")
         return GLOBAL_CACHE["school_calendar"]["data"]
 
-    print("🌐 重新下載並解析靜宜大學 iCal 行事曆...")
     calendar_dict = {}
     try:
-        # ⬇️ ⬇️ ⬇️ ⚠️ 安均，就是改這裡！把你的 Google 日曆 iCal 網址貼在雙引號裡面 ⚠️ ⬇️ ⬇️ ⬇️
         ical_url = "https://calendar.google.com/calendar/ical/c_l1lhlorqj2e0rdqk5t69klbens%40group.calendar.google.com/public/basic.ics" 
-        # ⬆️ ⬆️ ⬆️ ⚠️ 安均，就是改這裡！把你的 Google 日曆 iCal 網址貼在雙引號裡面 ⚠️ ⬆️ ⬆️ ⬆️
-        
         headers = {'User-Agent': 'Mozilla/5.0'}
         resp = requests.get(ical_url, headers=headers, verify=False, timeout=10)
         resp.encoding = 'utf-8'
@@ -201,10 +207,9 @@ def get_cached_school_calendar():
         
     if not calendar_dict:
         calendar_dict[f"{datetime.now().year}-{datetime.now().month}-{datetime.now().day}"] = [
-            {"title": "行事曆設定中", "time": "系統", "loc": "設定", "note": "請在後端填入正確的 iCal 網址"}
+            {"title": "行事曆設定中", "time": "系統", "loc": "設定", "note": "請填入正確的 iCal 網址"}
         ]
     
-    # 寫入快取
     GLOBAL_CACHE["school_calendar"]["data"] = calendar_dict
     GLOBAL_CACHE["school_calendar"]["timestamp"] = now
     return calendar_dict
@@ -224,14 +229,13 @@ def sync_campus():
     login_url = "https://alcat.pu.edu.tw/index_check.php"
     
     try:
-        # 1. 執行登入 (必須先同步完成)
+        # 1. 執行登入
         login_resp = session.post(login_url, data={'uid': student_id, 'upassword': password, 'en_flag': ''}, headers=headers, verify=False, timeout=10)
         
-        # 簡單判斷登入是否成功 (可依據學校系統實際回傳調整)
         if "登入失敗" in login_resp.text or "密碼錯誤" in login_resp.text:
             return jsonify({"status": "error", "message": "帳號或密碼錯誤"}), 401
 
-        # 🚀 2. 使用多執行緒 (ThreadPoolExecutor) 同時抓取課表與成績！
+        # 2. 多執行緒抓取
         with ThreadPoolExecutor(max_workers=2) as executor:
             future_courses = executor.submit(scrape_courses_and_info, session)
             future_grades = executor.submit(scrape_grades, session)
@@ -240,9 +244,8 @@ def sync_campus():
             grades_data = future_grades.result()
 
         if not course_list:
-            return jsonify({"status": "error", "message": "找不到課表資料，可能是學校系統維護中"}), 404
+            return jsonify({"status": "error", "message": "找不到課表資料，可能是系統維護中"}), 404
 
-        # 3. 取得校曆 (從快取或重新爬取)
         school_calendar_data = get_cached_school_calendar()
 
         return jsonify({
@@ -251,7 +254,7 @@ def sync_campus():
             "student_name": student_name, 
             "department": department,
             "courses": course_list,
-            "grades": grades_data,
+            "grades": grades_data, # 🚀 這個欄位現在會塞滿大一到大三的所有成績！
             "school_calendar": school_calendar_data 
         })
 
